@@ -53,8 +53,10 @@ public:
 	// set to true if any effect in the channel is enabled and running
 	bool m_stillRunning;
 
-	float m_peakLeft;
-	float m_peakRight;
+	// [REFACTOR: Vúmetros Lock-Free 0-255]
+	// Usamos std::atomic<uint8_t> para que la GUI lea sin locks ni data races.
+	std::atomic<uint8_t> m_peakLeft{0};
+	std::atomic<uint8_t> m_peakRight{0};
 	AudioBuffer m_buffer;
 	bool m_muteBeforeSolo;
 	BoolModel m_muteModel;

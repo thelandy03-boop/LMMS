@@ -28,6 +28,7 @@
 
 #include "lmms_export.h"
 
+#include <cstdint>
 #include <QLabel>
 
 
@@ -44,6 +45,7 @@ public:
 
 public slots:
 	void updatePeak(float peak);
+	void updatePeakByte(uint8_t peakByte); // [REFACTOR REAPER-STYLE: Nombre Único]
 
 protected:
 	void mousePressEvent(QMouseEvent* e) override;

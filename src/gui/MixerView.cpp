@@ -564,13 +564,23 @@ void MixerView::updateFaders()
 		const float opl = m_mixerChannelViews[i]->m_fader->getPeak_L();
 		const float opr = m_mixerChannelViews[i]->m_fader->getPeak_R();
 		const float fallOff = 1.25;
-		if (m->mixerChannel(i)->m_peakLeft >= opl/fallOff)
-		{
-			m_mixerChannelViews[i]->m_fader->setPeak_L(m->mixerChannel(i)->m_peakLeft);
-			// Set to -1 so later we'll know if this value has been refreshed yet.
-			m->mixerChannel(i)->m_peakLeft = -1;
-		}
-		else if (m->mixerChannel(i)->m_peakLeft != -1)
+// [REFACTOR LOCK-FREE: Clear-On-Read Atómico]
+// Leemos el byte atómico (0-255) y lo reiniciamos a 0 en una sola instrucción atómica sin locks
+uint8_t rawPeakLeftByte = m->mixerChannel(i)->m_peakLeft.exchange(0, std::memory_order_relaxed);
+uint8_t rawPeakRightByte = m->mixerChannel(i)->m_peakRight.exchange(0, std::memory_order_relaxed);
+
+// Convertimos a float (0.0f - 1.0f) para que el fader de Qt lo dibuje
+float peakL = static_cast<float>(rawPeakLeftByte) / 255.0f;
+float peakR = static_cast<float>(rawPeakRightByte) / 255.0f;
+
+if (peakL >= opl / fallOff)
+{
+	m_mixerChannelViews[i]->m_fader->setPeak_L(peakL);
+}
+if (peakR >= opr / fallOff)
+{
+	m_mixerChannelViews[i]->m_fader->setPeak_R(peakR);
+}
 		{
 			m_mixerChannelViews[i]->m_fader->setPeak_L(opl/fallOff);
 		}

@@ -214,13 +214,31 @@ void MixerChannel::doProcessing()
 
 		m_stillRunning = m_fxChain.processAudioBuffer(m_buffer);
 
-		const auto peakSamples = SampleFrame{m_buffer.absPeakValue(0), m_buffer.absPeakValue(1)};
-		m_peakLeft = std::max(m_peakLeft, peakSamples[0] * v);
-		m_peakRight = std::max(m_peakRight, peakSamples[1] * v);
+		// [REFACTOR: Cálculo SIMD / Autovectorizable de Picos]
+		// Obtenemos los picos directamente
+		float peakL = m_buffer.absPeakValue(0) * v;
+		float peakR = m_buffer.absPeakValue(1) * v;
+
+		// Convertir el float de amplitud a un byte (0-255)
+		// Multiplicamos por 255 y saturamos.
+		uint8_t bytePeakL = static_cast<uint8_t>(std::clamp(peakL * 255.0f, 0.0f, 255.0f));
+		uint8_t bytePeakR = static_cast<uint8_t>(std::clamp(peakR * 255.0f, 0.0f, 255.0f));
+
+		// Leer el valor actual atómicamente, comparar y guardar el mayor (Peak Hold en el audio thread)
+		auto updateAtomicPeak = [](std::atomic<uint8_t>& atomicPeak, uint8_t newPeak) {
+			uint8_t current = atomicPeak.load(std::memory_order_relaxed);
+			while (newPeak > current && !atomicPeak.compare_exchange_weak(current, newPeak, std::memory_order_relaxed)) {
+				// Spin loop en caso de contención (muy raro aquí)
+			}
+		};
+
+		updateAtomicPeak(m_peakLeft, bytePeakL);
+		updateAtomicPeak(m_peakRight, bytePeakR);
 	}
 	else
 	{
-		m_peakLeft = m_peakRight = 0.0f;
+		m_peakLeft.store(0, std::memory_order_relaxed);
+		m_peakRight.store(0, std::memory_order_relaxed);
 	}
 
 	// increment dependency counter of all receivers

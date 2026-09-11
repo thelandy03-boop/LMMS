@@ -56,6 +56,13 @@ void PeakIndicator::updatePeak(float peak)
 	}
 }
 
+// [REFACTOR REAPER-STYLE: Nombre Único para evitar ambigüedad en Qt connect]
+void PeakIndicator::updatePeakByte(uint8_t peakByte)
+{
+	float peak = static_cast<float>(peakByte) / 255.0f;
+	updatePeak(peak);
+}
+
 void PeakIndicator::mousePressEvent(QMouseEvent* e)
 {
 	if (e->buttons() & Qt::LeftButton)
