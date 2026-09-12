@@ -1,3 +1,5 @@
+﻿#include "UpdateChecker.h"
+#include <QTimer>
 /*
  * MainWindow.cpp - implementation of LMMS-main-window
  *
@@ -80,7 +82,13 @@ namespace lmms::gui
 
 
 MainWindow::MainWindow() :
-	m_workspace( nullptr ),
+
+	// Comprobador asíncrono de actualizaciones (GitHub Releases)
+	QTimer::singleShot(2000, this, []() {
+		auto *checker = new lmms::gui::UpdateChecker();
+		checker->checkForUpdates();
+	});
+m_workspace( nullptr ),
 	m_toolsMenu( nullptr ),
 	m_autoSaveTimer( this ),
 	m_viewMenu( nullptr ),
@@ -1700,3 +1708,4 @@ void MainWindow::MovableQMdiArea::mouseReleaseEvent(QMouseEvent* event)
 }
 
 } // namespace lmms::gui
+
