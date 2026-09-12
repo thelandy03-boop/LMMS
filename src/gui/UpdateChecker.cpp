@@ -3,11 +3,17 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QRegularExpression>
 #include <QDebug>
+#include <QFile>
+#include <QDir>
+#include <QStandardPaths>
+#include <QProcess>
+#include <QCoreApplication>
 
 namespace lmms
 {
@@ -23,7 +29,6 @@ UpdateChecker::UpdateChecker(QObject *parent) :
 
 void UpdateChecker::checkForUpdates()
 {
-    // Endpoint oficial de la API de GitHub para la última release del repositorio
     QUrl url("https://api.github.com/repos/thelandy03-boop/LMMS/releases/latest");
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, "LMMS-DAW-UpdateChecker/1.0");
@@ -34,32 +39,46 @@ void UpdateChecker::checkForUpdates()
 void UpdateChecker::onReplyFinished(QNetworkReply *reply)
 {
     if (!reply) return;
-
     reply->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError)
     {
-        qDebug() << "[UpdateChecker] Error de red al verificar actualizaciones:" << reply->errorString();
+        qDebug() << "[UpdateChecker] Error de red:" << reply->errorString();
+        return;
+    }
+
+    if (reply->property("isZipDownload").toBool())
+    {
+        QString tempZipPath = reply->property("tempZipPath").toString();
+        QFile file(tempZipPath);
+        if (file.open(QIODevice::WriteOnly))
+        {
+            file.write(reply->readAll());
+            file.close();
+            
+            applyUpdateAndRestart(tempZipPath);
+        }
         return;
     }
 
     QByteArray data = reply->readAll();
     QJsonDocument doc = QJsonDocument::fromJson(data);
-
-    if (!doc.isObject())
-    {
-        qDebug() << "[UpdateChecker] Respuesta JSON inválida desde GitHub.";
-        return;
-    }
+    if (!doc.isObject()) return;
 
     QJsonObject root = doc.object();
     QString tagName = root.value("tag_name").toString();
-    QString htmlUrl = root.value("html_url").toString();
-
-    if (tagName.isEmpty())
+    
+    QString zipUrl;
+    QJsonArray assets = root.value("assets").toArray();
+    for (const QJsonValue &val : assets)
     {
-        qDebug() << "[UpdateChecker] No se encontró la etiqueta tag_name en la respuesta.";
-        return;
+        QJsonObject asset = val.toObject();
+        QString name = asset.value("name").toString();
+        if (name.endsWith(".zip", Qt::CaseInsensitive))
+        {
+            zipUrl = asset.value("browser_download_url").toString();
+            break;
+        }
     }
 
     QString currentVersion = QString(LMMS_VERSION);
@@ -67,21 +86,28 @@ void UpdateChecker::onReplyFinished(QNetworkReply *reply)
     if (isNewerVersion(tagName, currentVersion))
     {
         QMessageBox msgBox;
-        msgBox.setWindowTitle(tr("Nueva actualización disponible"));
-        msgBox.setText(tr("<h3>¡Hay una nueva versión de LMMS disponible!</h3>"
-                          "<p>Versión instalada: <b>%1</b></p>"
-                          "<p>Nueva versión disponible: <b>%2</b></p>")
-                       .arg(currentVersion, tagName));
-        msgBox.setInformativeText(tr("¿Deseas abrir la página de descargas en tu navegador?"));
+        msgBox.setWindowTitle(tr("Actualización de LMMS"));
+        msgBox.setText(tr("<h3>¡Nueva versión %1 disponible!</h3>"
+                          "<p>Versión actual: <b>%2</b></p>"
+                          "<p>¿Deseas actualizar automáticamente ahora?</p>")
+                       .arg(tagName, currentVersion));
         msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
         msgBox.setDefaultButton(QMessageBox::Yes);
         msgBox.setIcon(QMessageBox::Information);
 
         if (msgBox.exec() == QMessageBox::Yes)
         {
-            if (!htmlUrl.isEmpty())
+            if (!zipUrl.isEmpty())
             {
-                QDesktopServices::openUrl(QUrl(htmlUrl));
+                QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+                QString tempZipPath = QDir(tempDir).filePath("lmms_update.zip");
+
+                QNetworkRequest downloadReq((QUrl(zipUrl)));
+                downloadReq.setHeader(QNetworkRequest::UserAgentHeader, "LMMS-DAW-UpdateChecker/1.0");
+
+                QNetworkReply *downloadReply = m_networkManager.get(downloadReq);
+                downloadReply->setProperty("isZipDownload", true);
+                downloadReply->setProperty("tempZipPath", tempZipPath);
             }
             else
             {
@@ -91,22 +117,34 @@ void UpdateChecker::onReplyFinished(QNetworkReply *reply)
     }
 }
 
+void UpdateChecker::applyUpdateAndRestart(const QString &zipPath)
+{
+    QString installDir = "C:\\LMMS_Installed";
+    QString exePath = installDir + "\\lmms.exe";
+
+    QString psCommand = QString(
+        "Start-Sleep -Seconds 2; " +
+        "Expand-Archive -Path '%1' -DestinationPath '%2' -Force; " +
+        "Remove-Item -Path '%1' -Force; " +
+        "Start-Process '%3'"
+    ).arg(zipPath, installDir, exePath);
+
+    QStringList args;
+    args << "-NoProfile" << "-NonInteractive" << "-Command" << psCommand;
+
+    QProcess::startDetached("powershell.exe", args);
+    QCoreApplication::quit();
+}
+
 QList<int> UpdateChecker::parseVersionString(const QString &versionStr)
 {
     QString clean = versionStr;
-    if (clean.startsWith('v', Qt::CaseInsensitive))
-    {
-        clean = clean.mid(1);
-    }
+    if (clean.startsWith('v', Qt::CaseInsensitive)) clean = clean.mid(1);
 
     static QRegularExpression re(R"(\d+)");
     QRegularExpressionMatchIterator it = re.globalMatch(clean);
     QList<int> parts;
-    while (it.hasNext())
-    {
-        QRegularExpressionMatch match = it.next();
-        parts.append(match.captured(0).toInt());
-    }
+    while (it.hasNext()) parts.append(it.next().captured(0).toInt());
     return parts;
 }
 
@@ -120,11 +158,9 @@ bool UpdateChecker::isNewerVersion(const QString &remoteVersionStr, const QStrin
     {
         int r = (i < remote.size()) ? remote[i] : 0;
         int c = (i < current.size()) ? current[i] : 0;
-
         if (r > c) return true;
         if (r < c) return false;
     }
-
     return false;
 }
 

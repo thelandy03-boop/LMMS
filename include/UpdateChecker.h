@@ -25,6 +25,7 @@ private slots:
     void onReplyFinished(QNetworkReply *reply);
 
 private:
+    void applyUpdateAndRestart(const QString &zipPath);
     static bool isNewerVersion(const QString &remoteVersionStr, const QString &currentVersionStr);
     static QList<int> parseVersionString(const QString &versionStr);
 
